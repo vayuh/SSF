@@ -18,7 +18,9 @@ import joblib
 import numpy as np
 import pandas as pd
 from sklearn.decomposition import PCA
+from sklearn.preprocessing import StandardScaler
 
+import cfg_target as cfg
 
 def load_results(filename):
 
@@ -90,12 +92,18 @@ def do_pca_on_covariate(df_train, df_test, n_components=10, location='pacific', 
     # flatten the dataframe such that the number of
     # samples equals the number of dates in the dataframe
     # and the number of features equals to lat x lon
+    
     df_train_flat = df_train.unstack(level=[0, 1])
     df_test_flat = df_test.unstack(level=[0, 1])
+
     x_train = df_train_flat.to_numpy()
     x_test = df_test_flat.to_numpy()
 
+    scaler = StandardScaler()
+    x_train = scaler.fit_transform(x_train)
+    x_test = scaler.transform(x_test)
     # make sure no NAN
+    
     if np.isnan(x_train).sum() > 0:
         np.nan_to_num(x_train, 0)
 
@@ -335,7 +343,6 @@ def zscore_spatial_temporal(rootpath,
     df2 = df2.sort_values(by=['lat', 'lon', date_id])
     df2 = df2.set_index(['lat', 'lon', date_id]) # add multi-index back
 
-
     df1[var_id+'_zscore'] = (df1[var_id] - df1['{}_daily_mean'.format(var_id)])/df1['{}_daily_std'.format(var_id)]
     df2[var_id+'_zscore'] = (df2[var_id] - df2['{}_daily_mean'.format(var_id)])/df2['{}_daily_std'.format(var_id)]
 
@@ -516,8 +523,6 @@ def train_val_split_target_ar(rootpath,
 
     """
 
-
-
     idx = pd.IndexSlice
 
     # check the legitimate of the given parameters
@@ -533,8 +538,6 @@ def train_val_split_target_ar(rootpath,
 
     if len(target.index.names) < 3:
         raise ValueError("Multiindex dataframe includes 3 levels: [lat,lon,start_date]")
-
-
 
     # handles the test time indices
     test_start =pd.Timestamp('{}-{:02d}-01'.format(val_year,val_month),freq='D')
@@ -564,8 +567,6 @@ def train_val_split_target_ar(rootpath,
     # training index
     df1 = pd.DataFrame(data={'pos':np.arange(len(time_index1))}, index=time_index1)
     df2 = pd.DataFrame(data={'pos':np.arange(len(time_index2))}, index=time_index2)
-
-
     train_y = np.asarray(Parallel(n_jobs=n_jobs)(delayed(create_sequence_custom)(date, df1['pos'], train_y_norm.values, 2, [28, 42, 56, 70])
                                              for date in train_time_index))
     test_y = np.asarray(Parallel(n_jobs=n_jobs)(delayed(create_sequence_custom)(date, df2['pos'], test_y_norm.values, 2, [28, 42, 56, 70])
@@ -734,8 +735,8 @@ def train_test_split_target(rootpath,
     if len(target.index.names) < 3:
         raise ValueError("Multiindex dataframe includes 3 levels: [lat,lon,start_date]")
 
-
     # handles the test time indices
+
     test_time_index = test_time_index_all[(test_time_index_all.month == test_month)
                                           & (test_time_index_all.year == test_year)]
 
@@ -748,20 +749,28 @@ def train_test_split_target(rootpath,
                                                                                           past_years=past_years)
     train_end = train_time_index[-1]
 
-
     train_y = target['{}_zscore'.format(var_id)].to_frame().loc[idx[:, :, train_time_index], :]
     test_y = target['{}_zscore'.format(var_id)].to_frame().loc[idx[:, :, test_time_index], :]
 
+    meta_data_test = target.loc[idx[:, :, test_time_index], :]
+    meta_data_test.reset_index(inplace=True)
 
+    meta_data_train = target.loc[idx[:, :, train_time_index], :]
+    meta_data_train.reset_index(inplace=True)
 
     train_y = train_y.unstack(level=[0, 1]).values
     test_y = test_y.unstack(level=[0, 1]).values
 
-
-    #print(train_y.shape,test_y.shape)
-
     save_results(rootpath, 'train_y_pca_{}_forecast{}.pkl'.format(test_year, test_month), train_y)
     save_results(rootpath, 'test_y_pca_{}_forecast{}.pkl'.format(test_year, test_month), test_y)
+    
+    # Save important metadata
+    tfm_fp = os.path.join(rootpath, '{}_forecast{}.h5'.format(test_year, test_month))
+    if os.path.exists(tfm_fp):
+        os.remove(tfm_fp)
+    
+    meta_data_test.to_hdf(tfm_fp, key='test')
+    meta_data_train.to_hdf(tfm_fp, key='train')
 
 
 def train_test_split_covariate(rootpath,
@@ -864,13 +873,11 @@ def train_test_split(rootpath,
             n_jobs: int -- number of workers for parallel
     """
 
-
+    train_test_split_target(rootpath, target, var_id, test_time_index_all,
+                            test_year, test_month, train_range, past_years)
 
     train_test_split_covariate(rootpath, data, test_time_index_all,
                                test_year, test_month, train_range, past_years, n_jobs)
-
-    train_test_split_target(rootpath, target, var_id, test_time_index_all,
-                            test_year, test_month, train_range, past_years)
 
 
 def train_test_split_target_ar(rootpath,
@@ -914,7 +921,6 @@ def train_test_split_target_ar(rootpath,
     train_time_shift_index = pd.date_range(train_start_shift, train_end)
     test_time_shift_index = pd.date_range(test_start_shift, test_end)
 
-
     # you have to have all data here, including the past 2 years data, so use shifted index
     train_y_norm = target['{}_zscore'.format(var_id)].to_frame().loc[idx[:, :, train_time_shift_index], :]
     test_y_norm = target['{}_zscore'.format(var_id)].to_frame().loc[idx[:, :, test_time_shift_index], :]
@@ -948,12 +954,6 @@ def train_test_split_target_ar(rootpath,
 
     save_results(rootpath, 'train_y_pca_ar_{}_forecast{}.pkl'.format(test_year, test_month), train_y)
     save_results(rootpath, 'test_y_pca_ar_{}_forecast{}.pkl'.format(test_year, test_month), test_y)
-
-
-
-    save_results(rootpath, 'train_y_pca_ar_{}_forecast{}.pkl'.format(test_year, test_month), train_y)
-    save_results(rootpath, 'test_y_pca_ar_{}_forecast{}.pkl'.format(test_year, test_month), test_y)
-
 
 ############ Convert spatial covariates to Map: for CNN/CNN-LSTM model #####################
 
@@ -1065,7 +1065,7 @@ def convert_covariate_to_map(df_covaraiate, var='sst', num_cores=16):
 
 
 
-    results = apply_parallel(df_covaraiate.groupby('start_date'), get_map_per_date, num_cores=16, var=var)
+    results = apply_parallel(df_covaraiate.groupby('start_date'), get_map_per_date, num_cores=num_cores, var=var)
 
     return results
 
