@@ -6,7 +6,7 @@ import argparse
 import sys
 import os
 os.chdir(os.path.join(".."))
-sys.path.insert(0, 'S2S/')
+sys.path.insert(0, '/SSF')
 import numpy as np
 import pandas as pd
 import preprocess
@@ -64,8 +64,7 @@ df = preprocess.zscore_spatial_temporal_map(path_to_save,
                                             to_save=True)
 # To save the intermideta zscored covariates, change "to_save" to True
 
-
-cov_map = preprocess.convert_covariate_to_map(df, var=var_name + '_zscore', num_cores=24)
+cov_map = preprocess.convert_covariate_to_map(df, var=var_name + '_zscore', num_cores=16)
 preprocess.save_results(path_to_save,'{}_{}_map.pkl'.format(var_name,var_location),cov_map)
 
 

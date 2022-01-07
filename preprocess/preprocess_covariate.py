@@ -54,7 +54,6 @@ n_components = cfg.num_pcs
 data =  pd.read_hdf(rootpath+filename)
 
 
-
 preprocess.get_pca_from_covariate(path_to_save,
                                   data,
                                   var_name,var_location,
@@ -73,47 +72,3 @@ for i in range(n_components):
                                    pca_data,var,
                                    train_start, train_end,
                                    test_start, test_end)
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-##var = '{}_{}_pca_{}'.format(var_location,var_name,0)
-##
-##
-##preprocess.zscore_temporal('test/',data,var,train_start,train_end,test_start,test_end)
-##
-##preprocess.zscore_spatial_temporal('test/',data,'tmp2m',train_start,train_end,test_start,test_end)
-##
-##
-##
-##
-##df1,df2 = preprocess.do_pca_on_covariate(train_X,test_X,n_components = 10,location=var_location,var_id = var_name)
-##
-##
-##
-##preprocess.get_pca_from_covariate(var_name,var_location,
-##                                  data,
-##                                  'test/',
-##                                  train_start,train_end,
-##                                  test_start,test_end,
-##                                  n_components=10)
-##
-##
-
-
-
-
-
-
