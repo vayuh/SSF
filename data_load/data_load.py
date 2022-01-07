@@ -178,9 +178,11 @@ class DataLoader(object):
         if resolution == 2:
             # subsample the map with the resolution as 2x2 for target variables
             spatial_map = pd.read_hdf(path + 'target_map_2.h5')
-            return spatial_map
+        elif resolution == .5:
+            spatial_map = pd.read_hdf(path + 'target_map_hires.h5')
         else:
             print('the spatial map for resolution as {} is not available'.format(resolution))
+        return spatial_map
 
     def shift_target(self, target_df, target_lat, target_lon, target_id, shift_days, forecast_range, operation):
         """Shift the target variable add compute summation or average values for the required forecast_range
@@ -200,6 +202,7 @@ class DataLoader(object):
             target_df = target_df.reset_index()
             target_df = target_df.set_index(['start_date', 'lat', 'lon'])
             target_df = target_df.unstack(['lat', 'lon'])
+            target_df = target_df.dropna(axis=1)
             date_list = target_df.index.get_level_values('start_date')
             num_date = len(date_list) - forecast_range + 1
             if operation == "sum":
@@ -219,10 +222,10 @@ class DataLoader(object):
                     date_start = date
                     date_end = date + pd.DateOffset(forecast_range - 1)
                     temp = target_df.loc[date_start:date_end].values
-                    target_df.loc[date_start] = np.median(temp, axis=0)
+                    target_df.loc[date_start] = np.median(temp, axis=0)          
             target_df.loc[date_list[num_date]:date_list[-1]] = float('nan')
             target_df = target_df.shift(-shift_days)
-            target_df = target_df.dropna()
+            target_df = target_df.dropna(axis=0)
             target_df = target_df.stack(['lat', 'lon'])
             target_df = target_df.reset_index()
             target_df = target_df.set_index(['lat', 'lon', 'start_date'])
@@ -361,7 +364,7 @@ class DataLoader(object):
         Returns:
             A multiindex dataframe with requested cliamte variables
 
-        """
+        """        
         if train_date_start.year == target_end_date.year:
             train_date_index = (train_date_start, target_end_date)
             df = data_augmentation_one_year(train_date_index, covariate_set, spatial_range, path)
@@ -373,7 +376,8 @@ class DataLoader(object):
             train_date_index.append((pd.Timestamp(target_end_date.year, 1, 1), target_end_date))
             results = Parallel(n_jobs=8)(delayed(data_augmentation_one_year)(train_date_temp, covariate_set, spatial_range, path) for train_date_temp in train_date_index)
             df = pd.concat(results)
-        df.sort_index(ascending=True, inplace=True)
+
+        df.sort_index(ascending=True, inplace=True, level=2) # TODO: Figure out why level = 2 is necessary
         return df
 
     def get_temporal_subset(self, data, start_date, end_date):
@@ -497,7 +501,7 @@ class DataLoader(object):
         return cov
 # (4) Combination of all operations
 
-    def data_download_target(self):
+    def data_download_target(self, use_anomaly=False):
         '''Load the target variable based on user's query
         Returns:
             A multiindex DataFrame with target variable
@@ -507,15 +511,38 @@ class DataLoader(object):
         train_date_start, target_end_date = self.date_adapt_target(self.train_date_start, self.date_end, self.shift_days, self.forecast_range)
         # get target variable
         print('obtain target data')
-        target = self.get_target_data(self.target_variable, self.target_lat, self.target_lon, train_date_start, target_end_date, self.target_res, self.path)
-#        print('shift and compute average for target')
+        vname = self.target_variable
+        target = self.get_target_data(vname, self.target_lat, self.target_lon, train_date_start, target_end_date, self.target_res, self.path)
+        if use_anomaly:
+            target_clims = pd.read_hdf('tmp2m_2degree_clim_per_monthday.h5')
+            target_clims.rename({vname: vname + '_clim'}, axis=1, inplace=True)
+            target_clims.reset_index(inplace=True)
+            target.reset_index(inplace=True)
+            target['day'] = target.start_date.dt.day
+            target['month'] = target.start_date.dt.month
+            
+            target = target.merge(target_clims, how='left', 
+                                      on=['lat', 'lon', 'month', 'day'])
+            target[vname + '_anom'] = target[vname] - target[vname + '_clim']
+            target = target.drop(['month', 'day'], axis=1)
+            
+            target = target.set_index(['start_date', 'lat', 'lon'])
+
+        target_ids = [vname]
+        if use_anomaly:
+            target_ids += [vname + '_anom', vname + '_clim']
+
         if self.shift_days > 0 or self.forecast_range > 0:
             print('shift and compute average for target')
-            target = self.shift_target(target, self.target_lat, self.target_lon, self.target_variable, self.shift_days, self.forecast_range, self.operation)
-
+            target_shifted = self.shift_target(target, self.target_lat, self.target_lon, target_ids, self.shift_days, self.forecast_range, self.operation)
+            target = target.rename({vname: '{}_timeseries'.format(vname)}, axis=1)
+            target[vname] = target_shifted
+            target = target.dropna(axis=0)
         if self.save_target is True:
+            target = target.sort_index()
             target.to_hdf(self.path_save + 'target.h5', key='target', mode='w')
             print('target data saved')
+        
         return target
 
     def data_download_cov(self):
